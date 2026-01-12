@@ -1,0 +1,20 @@
+# AutoCut Viral Generator v1.0
+# Cross-platform requirements (macOS / Windows)
+# Version locks to prevent breaking changes
+
+# Core video processing
+moviepy>=1.0.3,<2.0.0
+numpy>=1.21.0,<2.0.0
+Pillow>=9.0.0,<11.0.0
+
+# Web interface
+streamlit>=1.28.0,<2.0.0
+
+# Progress logging (MoviePy integration)
+proglog>=0.1.10
+
+# File watching (for hot reload)
+watchdog>=3.0.0
+
+# Audio processing (optional)
+pydub>=0.25.0

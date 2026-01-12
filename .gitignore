@@ -33,22 +33,18 @@ app.log
 .tmp_*
 temp_*
 
-# Output - exclude media files but keep folder structure
-output/*.mp4
-output/*.jpg
-output/*.png
-output/*.mov
+# Media files (keep folder structure, exclude content)
+*.mp4
+*.mov
+*.mp3
+*.wav
+*.m4a
+*.png
+*.jpg
+*.jpeg
+*.webp
 
-# Assets - exclude media files but keep folder structure
-assets/**/*.mp4
-assets/**/*.mov
-assets/**/*.mp3
-assets/**/*.wav
-assets/**/*.m4a
-assets/**/*.jpg
-assets/**/*.jpeg
-assets/**/*.png
-assets/**/*.webp
-
-# Keep folder structure with .gitkeep files
+# Keep folder structure with .gitkeep
+!.gitkeep
+!*/.gitkeep
 !**/.gitkeep

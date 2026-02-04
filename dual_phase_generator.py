@@ -57,7 +57,7 @@ class VideoConfig:
     height: int = 1920
     
     # ─── AUDIO ───
-    bgm_volume: float = 0.4  # Headless Param: Normalized audio level
+    bgm_volume: float = 0.32  # Headless Param: Normalized audio level
     
     # ─── DIGITAL HUMAN ───
     digital_human_size: float = 1.0  # Scale factor

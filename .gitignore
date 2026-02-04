@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+app.log
+
+# Temp files
+*.tmp
+.tmp_*
+temp_*
+
+# Media files (keep folder structure, exclude content)
+*.mp4
+*.mov
+*.mp3
+*.wav
+*.m4a
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Keep folder structure with .gitkeep
+!.gitkeep
+!*/.gitkeep
+!**/.gitkeep
+
+# Generated Output
+output/
+

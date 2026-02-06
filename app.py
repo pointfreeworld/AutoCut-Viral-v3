@@ -123,7 +123,7 @@ def init_session_state():
         # Phase 3: End Card - now mandatory
         
         # Phase 4: Music - FIXED RANGES v3.0
-        'bgm_volume': 0.4,  # Fixed range 0.3-1.2, default 0.4
+        'bgm_volume': 0.2,  # Fixed range 0.1-1.2, default 0.2
         'loop_music': True,
         
         # Generation
@@ -448,10 +448,10 @@ with st.expander("🎵 **Phase 4: Background Music**", expanded=False):
     
     col1, col2 = st.columns(2)
     with col1:
-        # Changed volume range to 0.3-1.2
+        # Changed volume range to 0.1-1.2
         bgm_vol = st.slider(
             "BGM Volume",
-            min_value=0.3, max_value=1.2,
+            min_value=0.1, max_value=1.2,
             value=st.session_state.bgm_volume,
             step=0.05,
             key="slider_bgm_vol"

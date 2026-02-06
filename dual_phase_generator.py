@@ -657,6 +657,11 @@ class DualPhaseGenerator:
         scale_factor = scale_factor * 0.60
         logger.info(f"   🎭 Processing avatar with scale={scale_factor:.2f}")
         avatar_clip = avatar_clip.resize(scale_factor)
+
+        # Boost avatar volume
+        if avatar_clip.audio is not None:
+            logger.info("   🔊 Boosting avatar volume (2.0x)")
+            avatar_clip = avatar_clip.volumex(2.0)
         
         if not avatar_clip.filename.endswith('.mov'):
             logger.info(f"🎭 Applying green screen removal (thr={self.config.chroma_key_threshold})...")

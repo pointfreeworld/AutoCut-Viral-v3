@@ -54,5 +54,6 @@ assets/*
 !**/.gitkeep
 
 # Generated Output
-output/
+output/*
+!output/.gitkeep
 

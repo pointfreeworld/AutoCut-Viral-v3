@@ -1,16 +1,17 @@
 from pathlib import Path
-from moviepy.editor import VideoFileClip
 from PIL import Image
 import numpy as np
 import os
+from src.media_io import configure_ffmpeg, load_video_clip
 
 def regenerate_thumbnails():
+    configure_ffmpeg()
     output_dir = Path("output")
     if not output_dir.exists():
         print("Output directory not found.")
         return
 
-    videos = list(output_dir.glob("*.mp4"))
+    videos = list(output_dir.rglob("*.mp4"))
     print(f"Found {len(videos)} videos. Checking thumbnails...")
 
     for vid_path in videos:
@@ -23,7 +24,7 @@ def regenerate_thumbnails():
         if not thumb_path.exists():
             print(f"Generating thumbnail for: {vid_path.name}")
             try:
-                clip = VideoFileClip(str(vid_path))
+                clip = load_video_clip(str(vid_path))
                 
                 # Robust timestamp logic
                 target_t = 0.1

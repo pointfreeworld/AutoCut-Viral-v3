@@ -1,4 +1,4 @@
-# 🎬 AutoCut Viral v2.0
+# 🎬 AutoCut Viral
 > **High-Performance Dual-Phase Video Generator for Viral Content Automation**
 
 ![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)
@@ -35,8 +35,8 @@
 
 ### Prerequisites
 - Python 3.9+
-- FFmpeg (required)
-- ImageMagick (optional, for advanced text effects)
+- FFmpeg（推荐；系统未安装时会使用 imageio-ffmpeg）
+- ImageMagick（可选，用于高级文本效果）
 
 ---
 
@@ -50,8 +50,8 @@
 brew install ffmpeg imagemagick
 
 # 3. Clone and setup
-git clone https://github.com/your-username/AutoCut-Viral-v2.git
-cd AutoCut-Viral-v2
+git clone https://github.com/pointfreeworld/AutoCut-Viral-v3.git
+cd AutoCut-Viral-v3
 pip3 install -r requirements.txt
 
 # 4. Run
@@ -74,8 +74,8 @@ streamlit run app.py
 **Step 3: Setup Project**
 ```powershell
 # Clone repository
-git clone https://github.com/your-username/AutoCut-Viral-v2.git
-cd AutoCut-Viral-v2
+git clone https://github.com/pointfreeworld/AutoCut-Viral-v3.git
+cd AutoCut-Viral-v3
 
 # Install Python dependencies
 pip install -r requirements.txt
@@ -118,23 +118,28 @@ Place your assets in the `assets/` directory. The system automatically scans the
 | `png_finger/` | Finger tap interaction icons | `.png` |
 | `png_hd/` | HD Quality Watermark icons | `.png` |
 | `overlays/` | Reaction videos or dynamic stickers | `.mp4`, `.mov` |
-| `end_cards/` | Outro clips | `.mp4`, `.mov` |
+| `stickers/` | 装饰贴纸 | `.png`, `.jpg` |
+| `end_cards/` | Outro clips | `.mp4`, `.mov`, `.png`, `.jpg` |
+| `png_free/` | 开场自由图片（Feb 2026 模板） | `.png`, `.jpg` |
+| `audio_free/` | 开场自由音频（Feb 2026 模板） | `.mp3`, `.wav`, `.m4a` |
 
 ---
 
 ## 📝 Output Naming Convention
 
-Generated videos follow a simplified naming format:
+Generated videos follow a simplified naming format (machine tag optional):
 
 ```
-MovieAds-MMDD-ID.mp4
-MovieAds-MMDD-ID.jpg  (thumbnail)
+MMDD-ID[-TAG].mp4
+MMDD-ID[-TAG].jpg  (thumbnail)
 ```
 
 **Examples:**
-- `MovieAds-0112-01.mp4`
-- `MovieAds-0112-02.mp4`
-- `MovieAds-0112-03.mp4`
+- `0210-01-A.mp4`
+- `0210-02-A.jpg`
+- `0210-03.mp4`  (no machine tag)
+
+All outputs are written flat into the `output/` directory (no subfolders).
 
 ---
 
@@ -190,6 +195,17 @@ def force_disk_cleanup():
 ```
 
 This ensures no orphaned files accumulate from crashed sessions.
+
+---
+
+## 🔧 Media IO 机制（重要）
+
+为避免 “failed to read the first frame” 这类问题，项目统一使用 `src/media_io.py` 加载视频：
+
+- 强制使用 imageio-ffmpeg（避免系统 ffmpeg 版本漂移）
+- 首帧读取失败会自动进行 **remux 修复**（无重编码）
+- 修复后会再次校验首帧，仍失败则抛出明确错误
+- 修复缓存输出到 `assets/**/.cache_remux/`（按源文件生成）
 
 ---
 

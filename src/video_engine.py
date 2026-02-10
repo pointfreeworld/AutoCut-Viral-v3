@@ -3,12 +3,12 @@ import PIL.Image
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
-from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, vfx, ColorClip
+from moviepy.editor import ImageClip, CompositeVideoClip, concatenate_videoclips, vfx, ColorClip
 import os
 import random
-import numpy as np
 from src import config
 from src import utils
+from src.media_io import configure_ffmpeg, load_video_clip
 
 from src.poster_wall import PosterWallGenerator
 
@@ -17,6 +17,8 @@ logger = utils.setup_logger()
 class VideoEngine:
     def __init__(self):
         self.poster_wall_gen = PosterWallGenerator()
+        self.ffmpeg_path = configure_ffmpeg()
+        logger.info(f"Using ffmpeg: {self.ffmpeg_path}")
 
     def create_video(self, plan_row, output_filename, overlay_pool=None, sticker_pool=None, progress_callback=None):
         """
@@ -59,9 +61,9 @@ class VideoEngine:
             # FIX 1: .mov Check & Tuned Masking
             if avatar_path.endswith('.mov'):
                 # Assume has alpha
-                avatar_clip = VideoFileClip(avatar_path, has_mask=True)
+                avatar_clip = load_video_clip(avatar_path, has_mask=True)
             else:
-                avatar_clip = VideoFileClip(avatar_path)
+                avatar_clip = load_video_clip(avatar_path)
                 # FIX 1b: Tuned mp4 masking thr=140
                 try:
                     avatar_clip = avatar_clip.fx(vfx.mask_color, color=[0, 255, 0], thr=140, s=10)
@@ -93,7 +95,7 @@ class VideoEngine:
             if end_card_path.endswith(('.png', '.jpg')):
                 end_card_clip = ImageClip(end_card_path).set_duration(config.END_CARD_DURATION)
             else:
-                end_card_clip = VideoFileClip(end_card_path)
+                end_card_clip = load_video_clip(end_card_path)
                 clips_to_close.append(end_card_clip)
                 if end_card_clip.duration > config.END_CARD_DURATION:
                     end_card_clip = end_card_clip.subclip(0, config.END_CARD_DURATION)
@@ -109,7 +111,7 @@ class VideoEngine:
             if progress_callback: progress_callback(50, "Processing Movie Highlights...")
 
             # 5. 处理 Movie Highlights (Process Movie Splicing)
-            movie_main_clip = VideoFileClip(movie_path)
+            movie_main_clip = load_video_clip(movie_path)
             clips_to_close.append(movie_main_clip)
             
             movie_spliced_clip, splice_log = self._process_movie_clips(movie_main_clip, target_movie_duration)
@@ -149,7 +151,7 @@ class VideoEngine:
                 else:
                     layers.append(self._get_fallback_bg(actual_total_duration))
             elif background_path and os.path.exists(background_path):
-                bg_clip = VideoFileClip(background_path)
+                bg_clip = load_video_clip(background_path)
                 clips_to_close.append(bg_clip)
                 if bg_clip.duration < actual_total_duration:
                     bg_clip = bg_clip.fx(vfx.loop, duration=actual_total_duration)
@@ -304,7 +306,13 @@ class VideoEngine:
             overlay_path = random.choice(overlay_pool)
             try: 
                 if overlay_path.endswith(('.mp4', '.mov')):
-                    clip = VideoFileClip(overlay_path)
+                    force_remux = overlay_path.endswith('.mp4')
+                    clip = load_video_clip(
+                        overlay_path,
+                        audio=False,
+                        force_remux=force_remux,
+                        allow_transcode=force_remux,
+                    )
                     if overlay_path.endswith('.mp4'):
                         try:
                             # Use mask_color 0 for black
@@ -340,7 +348,7 @@ class VideoEngine:
                 
             except Exception as e:
                 logger.error(f"Failed to process ghost overlay {overlay_path}: {e}")
-                current_time += 1.0
+                raise
 
         if not ghost_clips:
             return None

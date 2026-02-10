@@ -5,13 +5,15 @@ AutoCut-Viral: Production-Ready Streamlit UI
 """
 
 import streamlit as st
+import logging
 import os
 import re
 from pathlib import Path
 from datetime import datetime
 import random
 from PIL import Image, ImageOps
-from dual_phase_generator import DualPhaseGenerator, AssetScanner
+from dual_phase_generator import DualPhaseGenerator, AssetScanner, setup_logging
+from src.media_io import configure_ffmpeg
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PAGE CONFIGURATION
@@ -23,6 +25,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+configure_ffmpeg()
+setup_logging()
+app_logger = logging.getLogger("App")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
@@ -50,20 +55,16 @@ def scan_existing_videos(output_dir, date_str):
     output_path = Path(output_dir)
     if not output_path.exists():
         return 0, []
-    
-    # Pattern: {Avatar}-{Movie}-{Date}-{ID}.mp4
-    pattern = re.compile(rf".*-{date_str}-(\d+)\.mp4$")
-    
+    mmdd = date_str[4:] if len(date_str) == 8 else date_str
+    pattern = re.compile(rf"^(?:.*-)?{mmdd}-(\d+)(?:-[A-Za-z0-9]+)?\.mp4$")
     existing_files = []
     max_id = 0
-    
-    for file in output_path.glob("*.mp4"):
+    for file in output_path.rglob("*.mp4"):
         match = pattern.match(file.name)
         if match:
             video_id = int(match.group(1))
             max_id = max(max_id, video_id)
             existing_files.append(str(file))
-    
     return max_id, existing_files
 
 def get_gallery_items(output_dir, _refresh_trigger=None):
@@ -76,7 +77,7 @@ def get_gallery_items(output_dir, _refresh_trigger=None):
         return []
     
     items = []
-    for video_file in sorted(output_path.glob("*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
+    for video_file in sorted(output_path.rglob("*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True):
         thumb_file = video_file.with_suffix('.jpg')
         items.append({
             'video': str(video_file),
@@ -127,7 +128,7 @@ def init_session_state():
         # Phase 3: End Card - now mandatory
         
         # Phase 4: Music - FIXED RANGES v3.0
-        'bgm_volume': 0.4,  # Fixed range 0.3-1.2, default 0.4
+        'bgm_volume': 0.2,  # Fixed range 0.1-1.2, default 0.2
         'loop_music': True,
         
         # Generation
@@ -153,11 +154,29 @@ with st.sidebar:
     if st.button("🔄 Refresh Assets", width="stretch"):
         st.session_state.assets_scanned = False
         st.rerun()
+        
+    # Check history
+    import json
+    history_count = 0
+    if Path("history.json").exists():
+        try:
+            with open("history.json") as f:
+                history_count = len(json.load(f))
+        except: pass
+        
+    st.metric("History Pairs", history_count)
+    if st.button("🗑️ Clear History", width="stretch"):
+        if Path("history.json").exists():
+            Path("history.json").unlink()
+            st.toast("History Cleared!")
+            st.rerun()
     
     # Scan assets
     if not st.session_state.assets_scanned:
         with st.spinner("Scanning assets..."):
-            scanner = AssetScanner(base_path="assets")
+            # Robustness: Base path relative to app.py location
+            base_assets_path = Path(__file__).parent.resolve() / "assets"
+            scanner = AssetScanner(base_path=base_assets_path)
             st.session_state.assets = scanner.scan_all()
             st.session_state.assets_scanned = True
     
@@ -181,6 +200,11 @@ with st.sidebar:
     st.metric("HD Icon", len(assets.get('png_hd', [])))
     
     st.divider()
+    st.caption("Free Assets (Feb 2026)")
+    st.metric("Free Images", len(assets.get('png_free', [])))
+    st.metric("Free Audio", len(assets.get('audio_free', [])))
+    
+    st.divider()
     
     # Check required assets
     required_ok = all([
@@ -200,464 +224,313 @@ with st.sidebar:
         if not assets['movies']:
             st.warning("Upload movies in Phase 2")
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEMPLATES & UI COMPONENTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def render_template_ui(template_id, template_name, default_config=None):
+    """
+    Render the complete UI for a specific template.
+    All widgets are namespaced with `template_id` to ensure independent state.
+    """
+    
+    # Helper for namespaced keys
+    def k(key): return f"{template_id}_{key}"
+    
+    # Initialize defaults for this template if not present
+    if k('bg_grid_cols') not in st.session_state:
+        st.session_state[k('bg_grid_cols')] = default_config.get('bg_grid_cols', (3, 5))
+        st.session_state[k('bg_scroll_speed')] = default_config.get('bg_scroll_speed', (700, 1200))
+        st.session_state[k('shuffle_posters')] = default_config.get('shuffle_posters', True)
+        st.session_state[k('avatar_scale')] = default_config.get('avatar_scale', (0.6, 0.8))
+        st.session_state[k('avatar_stroke')] = default_config.get('avatar_stroke', 5)
+        st.session_state[k('avatar_x_offset')] = default_config.get('avatar_x_offset', (-100, 100))
+        st.session_state[k('bgm_volume')] = default_config.get('bgm_volume', 0.2)
+        st.session_state[k('loop_music')] = default_config.get('loop_music', True)
+        st.session_state[k('batch_size')] = default_config.get('batch_size', 1)
+        st.session_state[k('machine_tag')] = default_config.get('machine_tag', os.getenv("ACV_MACHINE_TAG", "A"))
+
+    st.markdown(f"### 🛠️ Configuration: {template_name}")
+    
+    # ─── PHASE 0: POSTER BACKGROUNDS ───
+    with st.expander("📂 **Phase 0: Poster Backgrounds**", expanded=False):
+        uploaded_bg = st.file_uploader(
+            "Upload Background Images",
+            type=['jpg', 'jpeg', 'png', 'webp'],
+            accept_multiple_files=True,
+            key=k("upload_bg")
+        )
+        
+        if uploaded_bg:
+            if st.button("💾 Save Backgrounds", key=k("save_bg")):
+                count = save_uploaded_files(uploaded_bg, "assets/0_backgrounds")
+                st.success(f"✅ Saved {count} background(s)")
+                st.session_state.assets_scanned = False
+        
+        st.divider()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.session_state[k('bg_grid_cols')] = st.slider(
+                "Columns (min, max)", 2, 5, st.session_state[k('bg_grid_cols')], key=k("slider_bg_cols")
+            )
+        with col2:
+            st.session_state[k('bg_scroll_speed')] = st.slider(
+                "Speed (px/s)", 500, 1500, st.session_state[k('bg_scroll_speed')], key=k("slider_bg_speed")
+            )
+        st.session_state[k('shuffle_posters')] = st.checkbox(
+            "🔀 Shuffle Posters", value=st.session_state[k('shuffle_posters')], key=k("check_shuffle_posters")
+        )
+
+    # ─── OPENING SEQUENCE (Feb 2026 Only) ───
+    if template_id == "feb2026":
+        with st.expander("🆓 **Opening Sequence (Free Assets)**", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                up_free_img = st.file_uploader(
+                    "Free Images (PNG/JPG)", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key=k("up_free_img")
+                )
+                if up_free_img and st.button("💾 Save Free Images", key=k("save_free_img")):
+                    count = save_uploaded_files(up_free_img, "assets/png_free")
+                    st.success(f"✅ {count} saved")
+                    st.session_state.assets_scanned = False
+            with c2:
+                up_free_aud = st.file_uploader(
+                    "Free Audio (MP3/WAV)", type=['mp3', 'wav', 'm4a'], accept_multiple_files=True, key=k("up_free_aud")
+                )
+                if up_free_aud and st.button("💾 Save Free Audio", key=k("save_free_aud")):
+                    count = save_uploaded_files(up_free_aud, "assets/audio_free")
+                    st.success(f"✅ {count} saved")
+                    st.session_state.assets_scanned = False
+
+    # ─── PHASE 1: DIGITAL HUMAN ───
+    with st.expander("🎭 **Phase 1: Digital Human**", expanded=False):
+        uploaded_avatar = st.file_uploader(
+            "Upload Avatars (MP4/MOV)", type=['mp4', 'mov'], accept_multiple_files=True, key=k("upload_avatar")
+        )
+        if uploaded_avatar:
+            if st.button("💾 Save Avatars", key=k("save_avatar")):
+                count = save_uploaded_files(uploaded_avatar, "assets/avatars")
+                st.success(f"✅ Saved {count} avatar(s)")
+                st.session_state.assets_scanned = False
+        
+        st.divider()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.session_state[k('avatar_scale')] = st.slider(
+                "Scale", 0.1, 1.0, st.session_state[k('avatar_scale')], 0.1, key=k("slider_avatar_scale")
+            )
+        with c2:
+            st.session_state[k('avatar_stroke')] = st.slider(
+                "Stroke (px)", 3, 10, st.session_state[k('avatar_stroke')], key=k("slider_avatar_stroke")
+            )
+        with c3:
+            st.session_state[k('avatar_x_offset')] = st.slider(
+                "X-Offset", -150, 150, st.session_state[k('avatar_x_offset')], key=k("slider_avatar_x")
+            )
+            
+        st.divider()
+        uploaded_ad_p1 = st.file_uploader(
+            "Upload Ad Text (Phase A)", type=['png', 'jpg'], accept_multiple_files=True, key=k("upload_ad_p1")
+        )
+        if uploaded_ad_p1 and st.button("💾 Save Ad Text", key=k("save_ad_p1")):
+            count = save_uploaded_files(uploaded_ad_p1, "assets/png_adtext")
+            st.success(f"✅ {count} saved")
+            st.session_state.assets_scanned = False
+
+    # ─── PHASE 2: MOVIE CLIP ───
+    with st.expander("🎥 **Phase 2: Movie Clip**", expanded=False):
+        uploaded_movie = st.file_uploader(
+            "Upload Movies (MP4/MOV)", type=['mp4', 'mov'], accept_multiple_files=True, key=k("upload_movie")
+        )
+        if uploaded_movie and st.button("💾 Save Movies", key=k("save_movie")):
+            count = save_uploaded_files(uploaded_movie, "assets/movies")
+            st.success(f"✅ {count} saved")
+            st.session_state.assets_scanned = False
+            
+        st.divider()
+        c1, c2 = st.columns(2)
+        with c1:
+            up_search = st.file_uploader("Search Box (PNG)", type=['png'], key=k("upload_search"))
+            if up_search and st.button("💾 Save Search Box", key=k("save_search")):
+                count = save_uploaded_files(up_search, "assets/png_searchbox")
+                st.success(f"✅ {count} saved")
+                st.session_state.assets_scanned = False
+        with c2:
+            up_hd = st.file_uploader("HD Icon (PNG)", type=['png'], key=k("upload_hd"))
+            if up_hd and st.button("💾 Save HD Icon", key=k("save_hd")):
+                count = save_uploaded_files(up_hd, "assets/png_hd")
+                st.success(f"✅ {count} saved")
+                st.session_state.assets_scanned = False
+
+    # ─── PHASE 3 & 4: END CARD & MUSIC ───
+    with st.expander("🎵 **Phase 3 & 4: End Card & Music**", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            up_end = st.file_uploader("End Cards", type=['png','mp4','jpg'], accept_multiple_files=True, key=k("up_end"))
+            if up_end and st.button("💾 Save End Cards", key=k("save_end")):
+                save_uploaded_files(up_end, "assets/end_cards")
+                st.session_state.assets_scanned = False
+        with c2:
+            up_music = st.file_uploader("Music", type=['mp3','wav'], accept_multiple_files=True, key=k("up_music"))
+            if up_music and st.button("💾 Save Music", key=k("save_music")):
+                save_uploaded_files(up_music, "assets/music")
+                st.session_state.assets_scanned = False
+        
+        st.divider()
+        st.session_state[k('bgm_volume')] = st.slider("BGM Volume", 0.1, 1.2, st.session_state[k('bgm_volume')], 0.05, key=k("slider_bgm"))
+        st.session_state[k('loop_music')] = st.checkbox("Loop Music", st.session_state[k('loop_music')], key=k("chk_loop"))
+
+    # ─── PHASE 5: OVERLAYS ───
+    with st.expander("🎨 **Phase 5: Overlays & Interaction**", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            up_over = st.file_uploader("Overlays", type=['png','mp4'], accept_multiple_files=True, key=k("up_over"))
+            if up_over and st.button("💾 Save Overlays", key=k("save_over")):
+                save_uploaded_files(up_over, "assets/overlays")
+                st.session_state.assets_scanned = False
+        with c2:
+            up_fing = st.file_uploader("Finger Cursor", type=['png'], key=k("up_fing"))
+            if up_fing and st.button("💾 Save Finger", key=k("save_fing")):
+                save_uploaded_files(up_fing, "assets/png_finger")
+                st.session_state.assets_scanned = False
+
+    # ─── GENERATION ───
+    st.divider()
+    st.header(f"🚀 Generate: {template_name}")
+    
+    c_batch, c_info = st.columns([1, 3])
+    with c_batch:
+        st.session_state[k('batch_size')] = st.number_input(
+            "Batch Size", 1, 500, st.session_state[k('batch_size')], key=k("in_batch")
+        )
+        st.session_state[k('machine_tag')] = st.text_input(
+            "Machine Tag", st.session_state[k('machine_tag')], max_chars=8, key=k("in_tag")
+        )
+    
+    with c_info:
+        date_str = datetime.now().strftime("%Y%m%d")
+        max_id, _ = scan_existing_videos(st.session_state.output_dir, date_str)
+        start_id = max_id + 1
+        st.info(f"📊 Will generate {st.session_state[k('batch_size')]} video(s) starting from ID: {start_id}")
+
+    col_btn, col_stop = st.columns([3, 1])
+    with col_btn:
+        generate = st.button(f"🎬 Start Generation ({template_name})", type="primary", width="stretch", key=k("btn_gen"))
+    with col_stop:
+        if st.button("🛑 Stop", width="stretch", key=k("btn_stop")):
+            st.session_state.stop_requested = True
+            st.warning("Stop requested...")
+
+    if generate:
+        # Validate assets
+        assets = st.session_state.assets
+        if not all([assets['backgrounds'], assets['avatars'], assets['movies']]):
+            st.error("❌ Missing required assets (Backgrounds, Avatars, or Movies)!")
+            return
+
+        output_dir = Path(st.session_state.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # UI Progress
+        st.markdown("### ⏳ Progress")
+        batch_bar = st.progress(0, text="Batch Starting...")
+        render_bar = st.progress(0, text="Initializing...")
+        status = st.empty()
+        
+        # Initialize Generator
+        generator = DualPhaseGenerator(assets)
+        st.session_state.stop_requested = False
+        batch_size = st.session_state[k('batch_size')]
+        
+        generated = []
+        for i in range(batch_size):
+            if st.session_state.stop_requested:
+                status.warning("🛑 Stopped by user!")
+                break
+                
+            vid = start_id + i
+            batch_bar.progress(i / batch_size, text=f"Processing {i+1}/{batch_size}")
+            status.text(f"🎬 Generating Video {vid}...")
+            
+            try:
+                # Get random parameters from RANGES
+                scale_min, scale_max = st.session_state[k('avatar_scale')]
+                speed_min, speed_max = st.session_state[k('bg_scroll_speed')]
+                col_min, col_max = st.session_state[k('bg_grid_cols')]
+                
+                result = generator.generate(
+                    output_path=output_dir / "temp.mp4",
+                    video_id=vid,
+                    date_str=date_str,
+                    loop_music=st.session_state[k('loop_music')],
+                    bgm_volume=st.session_state[k('bgm_volume')],
+                    shuffle_backgrounds=st.session_state[k('shuffle_posters')],
+                    st_progress_bar=render_bar,
+                    st_status_text=status,
+                    avatar_scale=random.uniform(scale_min, scale_max),
+                    bg_scroll_speed=random.randint(speed_min, speed_max),
+                    bg_grid_cols=random.randint(col_min, col_max),
+                    avatar_x_offset=st.session_state[k('avatar_x_offset')],
+                    machine_tag=st.session_state[k('machine_tag')],
+                    template_id=template_id # explicit strategy selection
+                )
+                generated.append(result)
+                batch_bar.progress((i + 1) / batch_size)
+                
+            except Exception as e:
+                app_logger.exception("Generation failed")
+                st.error(f"❌ Error: {str(e)}")
+                break
+        
+        status.success(f"✅ Completed! Generated {len(generated)} videos.")
+        st.balloons()
+        
+        # Trigger Gallery Refresh
+        import time
+        st.session_state.gallery_refresh_ts = time.time()
+        time.sleep(1)
+        st.rerun()
+
 # ═══════════════════════════════════════════════════════════════════════════
 # MAIN HEADER
 # ═══════════════════════════════════════════════════════════════════════════
 
 st.title("🎬 AutoCut-Viral Generator")
-st.markdown("**Production-Ready Edition** • 6-Phase Workflow with Smart Resume")
+st.markdown("**Production-Ready Edition** • Multi-Template Support")
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PHASE 0: POSTER BACKGROUNDS
+# TEMPLATES TABS
 # ═══════════════════════════════════════════════════════════════════════════
 
-with st.expander("📂 **Phase 0: Poster Backgrounds**", expanded=False):
-    st.markdown("Upload poster images for the scrolling background wall.")
-    
-    uploaded_bg = st.file_uploader(
-        "Upload Background Images",
-        type=['jpg', 'jpeg', 'png', 'webp'],
-        accept_multiple_files=True,
-        key="upload_bg"
-    )
-    
-    if uploaded_bg:
-        if st.button("💾 Save Backgrounds", key="save_bg"):
-            count = save_uploaded_files(uploaded_bg, "assets/0_backgrounds")
-            st.success(f"✅ Saved {count} background(s)")
-            st.session_state.assets_scanned = False
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Grid Columns Range**")
-        bg_cols = st.slider(
-            "Columns (min, max)",
-            min_value=2, max_value=5,
-            value=st.session_state.bg_grid_cols,
-            key="slider_bg_cols"
-        )
-        st.session_state.bg_grid_cols = bg_cols
-    
-    with col2:
-        st.markdown("**Scroll Speed Range (px/s)**")
-        bg_speed = st.slider(
-            "Speed (min, max)",
-            min_value=500, max_value=1500,
-            value=st.session_state.bg_scroll_speed,
-            key="slider_bg_speed"
-        )
-        st.session_state.bg_scroll_speed = bg_speed
-    
-    # Shuffle Posters checkbox
-    shuffle_posters = st.checkbox(
-        "🔀 Shuffle Posters",
-        value=st.session_state.shuffle_posters,
-        help="Randomize poster order for every video to ensure uniqueness",
-        key="check_shuffle_posters"
-    )
-    st.session_state.shuffle_posters = shuffle_posters
+# Initialize global state if needed
+if 'assets_scanned' not in st.session_state:
+    st.session_state.assets_scanned = False
+if 'stop_requested' not in st.session_state:
+    st.session_state.stop_requested = False
+if 'output_dir' not in st.session_state:
+    st.session_state.output_dir = 'output'
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PHASE 1: DIGITAL HUMAN
-# ═══════════════════════════════════════════════════════════════════════════
+# Default Configs (Can be different per template)
+DEFAULT_CONFIG = {
+    'bg_grid_cols': (3, 5),
+    'bg_scroll_speed': (700, 1200),
+    'avatar_scale': (0.6, 0.8),
+    'avatar_stroke': 5,
+}
 
-with st.expander("🎭 **Phase 1: Digital Human**", expanded=False):
-    st.markdown("Configure digital human avatars with green screen removal.")
-    
-    uploaded_avatar = st.file_uploader(
-        "Upload Avatar Videos (MP4/MOV)",
-        type=['mp4', 'mov'],
-        accept_multiple_files=True,
-        key="upload_avatar"
-    )
-    
-    if uploaded_avatar:
-        if st.button("💾 Save Avatars", key="save_avatar"):
-            count = save_uploaded_files(uploaded_avatar, "assets/avatars")
-            st.success(f"✅ Saved {count} avatar(s)")
-            st.session_state.assets_scanned = False
-    
-    st.divider()
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("**Scale Range**")
-        avatar_scale = st.slider(
-            "Scale (min, max)",
-            min_value=0.1, max_value=1.0,  # Wider range for smaller avatars
-            value=st.session_state.avatar_scale,
-            step=0.1,
-            key="slider_avatar_scale"
-        )
-        st.session_state.avatar_scale = avatar_scale
-    
-    with col2:
-        st.markdown("**White Stroke Width**")
-        avatar_stroke = st.slider(
-            "Stroke (px)",
-            min_value=3, max_value=10,
-            value=st.session_state.avatar_stroke,
-            key="slider_avatar_stroke"
-        )
-        st.session_state.avatar_stroke = avatar_stroke
-    
-    with col3:
-        st.markdown("**X-Offset Range**")  # Changed from Y-Offset to X-Offset
-        avatar_x = st.slider(
-            "X-Offset (min, max)",
-            min_value=-150, max_value=150,  # Horizontal offset range
-            value=st.session_state.avatar_x_offset,
-            key="slider_avatar_x"
-        )
-        st.session_state.avatar_x_offset = avatar_x
-    
-    st.divider()
-    st.markdown("**Shared: Ad Text Images**")
-    
-    uploaded_ad_p1 = st.file_uploader(
-        "Upload Ad Text (PNG/JPG)",
-        type=['png', 'jpg', 'jpeg'],
-        accept_multiple_files=True,
-        key="upload_ad_p1"
-    )
-    
-    if uploaded_ad_p1:
-        if st.button("💾 Save Ad Text", key="save_ad_p1"):
-            count = save_uploaded_files(uploaded_ad_p1, "assets/png_adtext")
-            st.success(f"✅ Saved {count} ad text image(s)")
-            st.session_state.assets_scanned = False
+tab_feb26, tab_dec25 = st.tabs(["🔥 Feb 2026", "❄️ Dec 2025"])
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PHASE 2: MOVIE CLIP
-# ═══════════════════════════════════════════════════════════════════════════
+with tab_feb26:
+    st.caption("Newest Template - February 2026 Edition")
+    render_template_ui("feb2026", "Feb 2026 Template", DEFAULT_CONFIG)
 
-with st.expander("🎥 **Phase 2: Movie Clip**", expanded=False):
-    st.markdown("Upload movie content and search UI elements.")
-    
-    uploaded_movie = st.file_uploader(
-        "Upload Movie Clips (MP4)",
-        type=['mp4', 'mov'],
-        accept_multiple_files=True,
-        key="upload_movie"
-    )
-    
-    if uploaded_movie:
-        if st.button("💾 Save Movies", key="save_movie"):
-            count = save_uploaded_files(uploaded_movie, "assets/movies")
-            st.success(f"✅ Saved {count} movie(s)")
-            st.session_state.assets_scanned = False
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Search Box**")
-        uploaded_search = st.file_uploader(
-            "Upload Search Box (PNG)",
-            type=['png', 'jpg', 'jpeg'],
-            accept_multiple_files=True,
-            key="upload_search"
-        )
-        
-        if uploaded_search:
-            if st.button("💾 Save Search Box", key="save_search"):
-                count = save_uploaded_files(uploaded_search, "assets/png_searchbox")
-                st.success(f"✅ Saved {count} search box(es)")
-                st.session_state.assets_scanned = False
-    
-    with col2:
-        st.markdown("**HD Icon**")
-        uploaded_hd = st.file_uploader(
-            "Upload HD Icon (PNG)",
-            type=['png'],
-            accept_multiple_files=True,
-            key="upload_hd"
-        )
-        
-        if uploaded_hd:
-            if st.button("💾 Save HD Icon", key="save_hd"):
-                count = save_uploaded_files(uploaded_hd, "assets/png_hd")
-                st.success(f"✅ Saved {count} HD icon(s)")
-                st.session_state.assets_scanned = False
-    
-    st.divider()
-    st.markdown("**Shared: Ad Text Images**")
-    st.caption("_Same folder as Phase 1 - uploading here will add to the same collection_")
-    
-    uploaded_ad_p2 = st.file_uploader(
-        "Upload Ad Text (PNG/JPG)",
-        type=['png', 'jpg', 'jpeg'],
-        accept_multiple_files=True,
-        key="upload_ad_p2"  # Different key, same folder
-    )
-    
-    if uploaded_ad_p2:
-        if st.button("💾 Save Ad Text", key="save_ad_p2"):
-            count = save_uploaded_files(uploaded_ad_p2, "assets/png_adtext")
-            st.success(f"✅ Saved {count} ad text image(s)")
-            st.session_state.assets_scanned = False
+with tab_dec25:
+    st.caption("Classic Template - December 2025 Edition")
+    render_template_ui("dec2025", "Dec 2025 Template", DEFAULT_CONFIG)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PHASE 3: END CARD
-# ═══════════════════════════════════════════════════════════════════════════
-
-with st.expander("🎯 **Phase 3: End Card**", expanded=False):
-    st.markdown("Upload end card images/videos for the finale.")
-    
-    uploaded_endcard = st.file_uploader(
-        "Upload End Cards (PNG/MP4)",
-        type=['png', 'jpg', 'jpeg', 'mp4'],
-        accept_multiple_files=True,
-        key="upload_endcard"
-    )
-    
-    if uploaded_endcard:
-        if st.button("💾 Save End Cards", key="save_endcard"):
-            count = save_uploaded_files(uploaded_endcard, "assets/end_cards")
-            st.success(f"✅ Saved {count} end card(s)")
-            st.session_state.assets_scanned = False
-    
-    st.divider()
-    
-    # Removed checkbox - end card concatenation is now mandatory if assets exist
-    if assets.get('end_cards'):
-        st.info(f"ℹ️ End card will be automatically appended ({len(assets['end_cards'])} available)")
-    else:
-        st.warning("⚠️ No end cards uploaded - videos will end at movie clip phase")
-
-# ═══════════════════════════════════════════════════════════════════════════
-# PHASE 4: BACKGROUND MUSIC
-# ═══════════════════════════════════════════════════════════════════════════
-
-with st.expander("🎵 **Phase 4: Background Music**", expanded=False):
-    st.markdown("Upload background music tracks.")
-    
-    uploaded_music = st.file_uploader(
-        "Upload Music (MP3/WAV/M4A)",
-        type=['mp3', 'wav', 'm4a'],
-        accept_multiple_files=True,
-        key="upload_music"
-    )
-    
-    if uploaded_music:
-        if st.button("💾 Save Music", key="save_music"):
-            count = save_uploaded_files(uploaded_music, "assets/music")
-            st.success(f"✅ Saved {count} music track(s)")
-            st.session_state.assets_scanned = False
-    
-    st.divider()
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        # Changed volume range to 0.3-1.2
-        bgm_vol = st.slider(
-            "BGM Volume",
-            min_value=0.3, max_value=1.2,
-            value=st.session_state.bgm_volume,
-            step=0.05,
-            key="slider_bgm_vol"
-        )
-        st.session_state.bgm_volume = bgm_vol
-    
-    with col2:
-        # Added loop music checkbox
-        loop_music = st.checkbox(
-            "Loop Music",
-            value=st.session_state.loop_music,
-            key="check_loop_music",
-            help="If unchecked, music will stop when track ends"
-        )
-        st.session_state.loop_music = loop_music
-
-# ═══════════════════════════════════════════════════════════════════════════
-# PHASE 5: OVERLAYS & INTERACTION
-# ═══════════════════════════════════════════════════════════════════════════
-
-with st.expander("🎨 **Phase 5: Overlays & Interaction**", expanded=False):
-    st.markdown("Upload interactive overlays (CTA buttons) and finger cursor.")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**CTA Overlays**")
-        uploaded_overlay = st.file_uploader(
-            "Upload Overlays (MP4/PNG)",
-            type=['mp4', 'mov', 'png'],
-            accept_multiple_files=True,
-            key="upload_overlay"
-        )
-        
-        if uploaded_overlay:
-            if st.button("💾 Save Overlays", key="save_overlay"):
-                count = save_uploaded_files(uploaded_overlay, "assets/overlays")
-                st.success(f"✅ Saved {count} overlay(s)")
-                st.session_state.assets_scanned = False
-    
-    with col2:
-        st.markdown("**Finger Cursor**")
-        uploaded_finger = st.file_uploader(
-            "Upload Finger (PNG)",
-            type=['png'],
-            accept_multiple_files=True,
-            key="upload_finger"
-        )
-        
-        if uploaded_finger:
-            if st.button("💾 Save Finger", key="save_finger"):
-                count = save_uploaded_files(uploaded_finger, "assets/png_finger")
-                st.success(f"✅ Saved {count} finger image(s)")
-                st.session_state.assets_scanned = False
-    
-    # Removed safe zone slider - backend calculates intelligently based on finger width
-
-# ═══════════════════════════════════════════════════════════════════════════
-# GENERATION SECTION
-# ═══════════════════════════════════════════════════════════════════════════
-
-st.divider()
-st.header("🚀 Video Generation")
-
-col_batch, col_gen = st.columns([1, 3])
-
-with col_batch:
-    batch_size = st.number_input(
-        "Batch Size",
-        min_value=1, max_value=100,
-        value=st.session_state.batch_size,
-        key="input_batch_size"
-    )
-    st.session_state.batch_size = batch_size
-
-with col_gen:
-    st.caption(f"Will generate {batch_size} video(s)")
-    
-    # Smart Resume Logic
-    date_str = datetime.now().strftime("%Y%m%d")
-    max_existing_id, existing_videos = scan_existing_videos(st.session_state.output_dir, date_str)
-    
-    if max_existing_id > 0:
-        st.info(f"📊 Found {max_existing_id} existing video(s) from today. Will resume from #{max_existing_id + 1}")
-        start_id = max_existing_id + 1
-    else:
-        start_id = 1
-
-# Add Stop Button alongside Generate Button
-col_gen_btn, col_stop_btn = st.columns([3, 1])
-
-with col_gen_btn:
-    generate_clicked = st.button("🎬 Generate Videos", type="primary", width="stretch")
-
-with col_stop_btn:
-    if st.button("🛑 Stop", width="stretch"):
-        st.session_state.stop_requested = True
-        st.warning("Stop requested - will halt after current video")
-
-if generate_clicked:
-    # Validate required assets
-    if not all([assets['backgrounds'], assets['avatars'], assets['movies']]):
-        st.error("❌ Missing required assets! Please upload backgrounds, avatars, and movies.")
-    else:
-        # Create output directory
-        Path(st.session_state.output_dir).mkdir(exist_ok=True)
-        
-        # Initialize DUAL progress tracking
-        st.markdown("**📊 Progress**")
-        batch_bar = st.progress(0, text="Batch Progress: 0%")
-        render_bar = st.progress(0, text="Waiting to start...")
-        status_text = st.empty()
-        
-        # Initialize generator
-        generator = DualPhaseGenerator(assets)
-        
-        # Reset stop flag at start
-        st.session_state.stop_requested = False
-        
-        # Generate videos
-        generated_videos = []
-        
-        for i in range(batch_size):
-            # Check stop flag
-            if st.session_state.stop_requested:
-                status_text.warning("🛑 Batch generation stopped by user!")
-                st.warning(f"⚠️ Stopped at video {i+1}/{batch_size}. Generated {len(generated_videos)} video(s).")
-                break
-            
-            video_id = start_id + i
-            
-            # Update status
-            batch_progress = i / batch_size
-            batch_bar.progress(batch_progress, text=f"Batch Progress: Video {i+1}/{batch_size}")
-            render_bar.progress(0, text="Starting video generation...")
-            status_text.text(f"🎬 Generating video {i+1}/{batch_size} (ID: {video_id:02d})...")
-            
-            # Select random assets
-            avatar_path = random.choice(assets['avatars'])
-            movie_path = random.choice(assets['movies'])
-            
-            try:
-                # Get random scale from slider range
-                scale_min, scale_max = st.session_state.avatar_scale
-                avatar_scale_value = random.uniform(scale_min, scale_max)
-                
-                # Get random scroll speed and x_offset from slider ranges
-                speed_min, speed_max = st.session_state.bg_scroll_speed
-                bg_scroll_speed_value = random.randint(speed_min, speed_max)
-                
-                # Get random grid columns from slider range
-                cols_min, cols_max = st.session_state.bg_grid_cols
-                bg_grid_cols_value = random.randint(cols_min, cols_max)
-                
-                # Generate video with ALL UI settings passed to backend
-                result = generator.generate(
-                    avatar_path=avatar_path,
-                    movie_path=movie_path,
-                    output_path=Path(st.session_state.output_dir) / "temp.mp4",
-                    video_id=video_id,
-                    date_str=date_str,
-                    loop_music=st.session_state.loop_music,
-                    bgm_volume=st.session_state.bgm_volume,
-                    shuffle_backgrounds=st.session_state.shuffle_posters,
-                    st_progress_bar=render_bar,
-                    st_status_text=status_text,
-                    avatar_scale=avatar_scale_value,
-                    bg_scroll_speed=bg_scroll_speed_value,
-                    avatar_x_offset=st.session_state.avatar_x_offset,
-                    bg_grid_cols=bg_grid_cols_value  # Random grid columns per video
-                )
-                
-                generated_videos.append(result)
-                
-                # Update batch progress
-                batch_progress = (i + 1) / batch_size
-                batch_bar.progress(batch_progress, text=f"Batch Progress: {int(batch_progress * 100)}%")
-                render_bar.progress(1.0, text="✅ Video complete!")
-                
-                # Update gallery refresh timestamp after each video
-                import time
-                st.session_state.gallery_refresh_ts = time.time()
-                
-            except Exception as e:
-                import traceback
-                traceback.print_exc()  # Print full traceback to terminal
-                st.error(f"❌ Error generating video {video_id}: {str(e)}")
-                break
-        
-        # Complete
-        batch_bar.progress(1.0, text="Batch Complete! 🎉")
-        render_bar.progress(1.0, text="All videos rendered!")
-        status_text.success(f"✅ Generated {len(generated_videos)}/{batch_size} video(s)!")
-        st.balloons()
-        
-        # Force gallery refresh by updating timestamp and triggering rerun
-        import time
-        st.session_state.gallery_refresh_ts = time.time()
-        st.session_state.generation_just_completed = True
-        
-        # Short delay then force page rerun to refresh gallery
-        time.sleep(1)
-        st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════
 # OUTPUT GALLERY

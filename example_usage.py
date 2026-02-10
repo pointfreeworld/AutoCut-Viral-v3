@@ -10,6 +10,7 @@ import sys
 
 # Import the main generator and config
 from dual_phase_generator import DualPhaseGenerator, AssetScanner, VideoConfig, setup_logging
+from src.media_io import configure_ffmpeg, load_video_clip
 
 def example_basic():
     """Example 1: Basic usage with all defaults"""
@@ -65,7 +66,7 @@ def example_concatenate_with_endcard():
     print("EXAMPLE 3: Concatenate with End Card")
     print("="*70)
     
-    from moviepy.editor import VideoFileClip, concatenate_videoclips
+    from moviepy.editor import concatenate_videoclips
     
     # First generate dual-phase
     scanner = AssetScanner(base_path="assets")
@@ -83,8 +84,8 @@ def example_concatenate_with_endcard():
             print(f"\n🔗 Found end card: {end_cards[0].name}")
             
             # Load clips
-            dual_phase = VideoFileClip(dual_phase_path)
-            end_card = VideoFileClip(str(end_cards[0]))
+            dual_phase = load_video_clip(dual_phase_path)
+            end_card = load_video_clip(str(end_cards[0]))
             
             # Concatenate
             final = concatenate_videoclips([dual_phase, end_card], method="compose")
@@ -135,6 +136,7 @@ def example_batch_generation():
 if __name__ == "__main__":
     # Initialize logging
     setup_logging()
+    configure_ffmpeg()
     
     # Ensure output directory exists
     Path("output").mkdir(exist_ok=True)

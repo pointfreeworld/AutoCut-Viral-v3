@@ -44,7 +44,15 @@ temp_*
 *.jpeg
 *.webp
 
+# Assets: Ignore all content but keep structure
+assets/*
+!assets/**/.gitkeep
+
 # Keep folder structure with .gitkeep
 !.gitkeep
 !*/.gitkeep
 !**/.gitkeep
+
+# Generated Output
+output/
+

@@ -3,8 +3,12 @@ from PIL import Image, ImageDraw
 import os
 import random
 
+# Define Base Paths
+# Adjusted for tools/ directory location
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Paths
-ASSETS_DIR = "assets"
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 AVATAR_DIR = os.path.join(ASSETS_DIR, "avatars")
 MOVIE_DIR = os.path.join(ASSETS_DIR, "movies")
 END_CARD_DIR = os.path.join(ASSETS_DIR, "end_cards")

@@ -48,6 +48,15 @@ temp_*
 assets/*
 !assets/**/.gitkeep
 
+# Specific asset folders to keep empty structure
+!assets/png_free/
+assets/png_free/*
+!assets/png_free/.gitkeep
+
+!assets/audio_free/
+assets/audio_free/*
+!assets/audio_free/.gitkeep
+
 # Keep folder structure with .gitkeep
 !.gitkeep
 !*/.gitkeep
